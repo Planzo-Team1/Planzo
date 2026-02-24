@@ -1,28 +1,32 @@
-node_modules
-dist
-build
-.cache
-.DS_Store
+# ─── Node / Build Output ──────
+node_modules/
+dist/
+.vite/
+*.local
+
+# ─── Environment ──────────────
 .env
 .env.local
 .env.*.local
-coverage
-tmp
 
-# Logs
+# ─── macOS ────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ─── Editor ───────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Logs ─────────────────────
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
 
-# IDE
-.vscode
-.idea
-.cursor
+# ─── Test Coverage ────────────
+coverage/
 
-# CDK
-infra/cdk/cdk.out
-
-# Docker
-*.log
-
+# ─── Jenkins ──────────────────
+.jenkins/
