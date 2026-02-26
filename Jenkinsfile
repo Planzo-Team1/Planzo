@@ -9,31 +9,44 @@ pipeline {
 
     environment {
         APP_NAME     = 'planzo-web'
-        DEV_SERVER   = "ubuntu@172.31.6.31" // Update this
+        DEV_SERVER   = "ubuntu@172.31.6.31"
+        
+        // IMPORTANT: These IDs must exist EXACTLY as written in Jenkins Credentials UI
         MAPS_KEY     = credentials('VITE_GOOGLE_MAPS_API_KEY')
         STRIPE_KEY   = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
-        DB_CREDS_USR   = credentials('POSTGRES_USER')
-        DB_CREDS_PSW   = credentials('POSTGRES_PASSWORD')
-        GIT_AUTH = credentials('github-token')
+        
+        // If these are "Secret Text" type:
+        DB_USER      = credentials('POSTGRES_USER')
+        DB_PASS      = credentials('POSTGRES_PASSWORD')
+        
+        // If 'github-token' is a Username with Password type:
+        GIT_CREDS    = credentials('github-token')
     }
 
     stages {
         stage('Checkout') {
             steps {
-              checkout([$class: 'GitSCM', 
-              branches: [[name: '*/test_jenkins']], 
-              userRemoteConfigs: [[url: 'https://github.com/kevinr78/Planzo.git']]
-]) }
+                // Using the GIT_CREDS to authenticate the checkout
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/test_jenkins']], 
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/kevinr78/Planzo.git',
+                        credentialsId: 'github-token' 
+                    ]]
+                ])
+            }
         }
-            stage('Install Dependencies') {
-      steps {
-        echo '=== Installing npm dependencies ==='
-        sh 'npm ci --prefer-offline'
-      }
-    }
+
+        stage('Install Dependencies') {
+            steps {
+                echo '=== Installing npm dependencies ==='
+                sh 'npm ci --prefer-offline'
+            }
+        }
+
         stage('Build Frontend') {
             steps {
-                // Vite injects these at build time into the JS bundle
+                // Using the variables defined in the environment block
                 sh "VITE_GOOGLE_MAPS_API_KEY=${MAPS_KEY} VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_KEY} npm run build"
             }
         }
@@ -47,18 +60,18 @@ pipeline {
         stage('Remote Deploy') {
             steps {
                 script {
-                    // 1. Transfer docker-compose to Dev Server
                     sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${DEV_SERVER}:~/docker-compose.yml"
                     
-                    // 2. Execute Deployment on Dev Server
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
-                            export POSTGRES_USER=${DB_CREDS_USR}
-                            export POSTGRES_PASSWORD=${DB_CREDS_PSW}
+                            export POSTGRES_USER=${DB_USER}
+                            export POSTGRES_PASSWORD=${DB_PASS}
                             docker-compose up -d db
                             
                             echo 'Waiting for PostGIS...'
-                            until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do sleep 2; done
+                            until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
+                                sleep 2
+                            done
                             
                             docker-compose up -d app
                         "
@@ -69,7 +82,16 @@ pipeline {
     }
 
     post {
-        success { echo "✅ Deployment Complete" }
-        always { cleanWs() }
+        success {
+            echo "✅ Deployment Complete"
+        }
+        always {
+            // Secure cleanup: only runs if a workspace actually exists
+            script {
+                if (env.NODE_NAME) {
+                    cleanWs()
+                }
+            }
+        }
     }
 }
