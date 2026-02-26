@@ -7,17 +7,19 @@ pipeline {
         timeout(time: 30, unit: 'MINUTES')
     }
 
-    environment {
-        APP_NAME     = 'planzo-web'
-        DEV_SERVER   = "ubuntu@172.31.6.31"
-        
-        // IMPORTANT: These IDs must exist EXACTLY as written in Jenkins Credentials UI
-        MAPS_KEY     = credentials('VITE_GOOGLE_MAPS_API_KEY')
-        STRIPE_KEY   = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
-        
-        // If 'github-token' is a Username with Password type:
-        GIT_CREDS    = credentials('github-token')
-    }
+environment {
+    APP_NAME      = 'planzo-web'
+    DEV_SERVER    = "ubuntu@172.31.6.31"
+    
+    // Map the Secret Text IDs to local variables
+    MAPS_KEY      = credentials('VITE_GOOGLE_MAPS_API_KEY')
+    STRIPE_KEY    = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
+    DB_USER       = credentials('POSTGRES_USER')
+    DB_PASS       = credentials('POSTGRES_PASSWORD')
+    
+    // Mapping the Username/Password for GitHub
+    GIT_CREDS     = credentials('github-token')
+}
 
     stages {
         stage('Checkout') {
@@ -53,28 +55,33 @@ pipeline {
             }
         }
 
-        stage('Remote Deploy') {
-            steps {
-                script {
-                    sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${DEV_SERVER}:~/docker-compose.yml"
+stage('Remote Deploy') {
+    steps {
+        script {
+            // Transfer docker-compose
+            sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${DEV_SERVER}:~/docker-compose.yml"
+            
+            // Execute on Dev Server
+            sh """
+                ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
+                    # Use the variables we mapped in the environment block
+                    export POSTGRES_USER=${DB_USER}
+                    export POSTGRES_PASSWORD=${DB_PASS}
                     
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
-                            export POSTGRES_USER=${env.POSTGRES_USER}
-                            export POSTGRES_PASSWORD=${env.POSTGRES_PASSWORD}
-                            docker-compose up -d db
-                            
-                            echo 'Waiting for PostGIS...'
-                            until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
-                                sleep 2
-                            done
-                            
-                            docker-compose up -d app
-                        "
-                    """
-                }
-            }
+                    docker-compose up -d db
+                    
+                    echo 'Waiting for PostGIS...'
+                    # Escaped $ for the shell command inside the SSH string
+                    until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
+                        sleep 2
+                    done
+                    
+                    docker-compose up -d app
+                "
+            """
         }
+    }
+}
     }
 
     post {
