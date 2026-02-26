@@ -54,7 +54,7 @@ environment {
                 sh "docker build -t ${APP_NAME}:latest ."
             }
         }
-stage('Remote Deploy') {
+stage('Remote Deploy Stage') {
     steps {
         script {
             // 1. Transfer docker-compose to Dev Server
