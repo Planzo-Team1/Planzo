@@ -15,10 +15,6 @@ pipeline {
         MAPS_KEY     = credentials('VITE_GOOGLE_MAPS_API_KEY')
         STRIPE_KEY   = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
         
-        // If these are "Secret Text" type:
-        DB_USER      = credentials('POSTGRES_USER')
-        DB_PASS      = credentials('POSTGRES_PASSWORD')
-        
         // If 'github-token' is a Username with Password type:
         GIT_CREDS    = credentials('github-token')
     }
@@ -64,8 +60,8 @@ pipeline {
                     
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
-                            export POSTGRES_USER=${DB_USER}
-                            export POSTGRES_PASSWORD=${DB_PASS}
+                            export POSTGRES_USER=${env.POSTGRES_USER}
+                            export POSTGRES_PASSWORD=${env.POSTGRES_PASSWORD}
                             docker-compose up -d db
                             
                             echo 'Waiting for PostGIS...'
