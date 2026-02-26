@@ -54,24 +54,23 @@ environment {
                 sh "docker build -t ${APP_NAME}:latest ."
             }
         }
-
 stage('Remote Deploy') {
     steps {
         script {
-            // Transfer docker-compose
+            // 1. Transfer docker-compose to Dev Server
             sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${DEV_SERVER}:~/docker-compose.yml"
             
-            // Execute on Dev Server
+            // 2. Execute Deployment using bracketed variables
             sh """
                 ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
-                    # Use the variables we mapped in the environment block
                     export POSTGRES_USER=${DB_USER}
                     export POSTGRES_PASSWORD=${DB_PASS}
                     
+                    cd ~
                     docker-compose up -d db
                     
                     echo 'Waiting for PostGIS...'
-                    # Escaped $ for the shell command inside the SSH string
+                    # Use triple backslash for the remote shell variable
                     until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
                         sleep 2
                     done
