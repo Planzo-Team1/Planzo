@@ -14,6 +14,7 @@ pipeline {
         STRIPE_KEY   = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
         DB_CREDS_USR   = credentials('POSTGRES_USER')
         DB_CREDS_PSW   = credentials('POSTGRES_PASSWORD')
+        GIT_AUTH = credentials('github-token')
     }
 
     stages {
