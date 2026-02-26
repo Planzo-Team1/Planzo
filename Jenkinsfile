@@ -1,121 +1,74 @@
 pipeline {
-  agent any
+    agent any
 
-  options {
-    timestamps()
-    disableConcurrentBuilds()
-    timeout(time: 30, unit: 'MINUTES')
-  }
-
-  environment {
-    NODE_ENV            = 'production'
-    APP_NAME            = 'planzo-web'
-    DOCKER_IMAGE        = "${APP_NAME}:${BUILD_NUMBER}"
-    DOCKER_IMAGE_LATEST = "${APP_NAME}:latest"
-  }
-
-  stages {
-    stage('Checkout') {
-      steps {
-        echo "=== Checking out branch: ${env.BRANCH_NAME} ==="
-        checkout scm
-      }
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
     }
 
-    stage('Install Dependencies') {
+    environment {
+        APP_NAME     = 'planzo-web'
+        DEV_SERVER   = "ubuntu@172.31.6.31" // Update this
+        MAPS_KEY     = credentials('VITE_GOOGLE_MAPS_API_KEY')
+        STRIPE_KEY   = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
+        DB_CREDS_USR   = credentials('POSTGRES_USER')
+        DB_CREDS_PSW   = credentials('POSTGRES_PASSWORD')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+              checkout([$class: 'GitSCM', 
+              branches: [[name: '*/test_jenkins']], 
+              userRemoteConfigs: [[url: 'https://github.com/kevinr78/Planzo.git']]
+]) }
+        }
+            stage('Install Dependencies') {
       steps {
         echo '=== Installing npm dependencies ==='
         sh 'npm ci --prefer-offline'
       }
     }
-
-    stage('Lint') {
-      steps {
-        echo '=== Running ESLint ==='
-        sh 'npm run lint --if-present || echo "Lint step skipped (no lint script)"'
-      }
-    }
-
-    stage('Type Check') {
-      steps {
-        echo '=== Running TypeScript type checker ==='
-        sh 'npm run typecheck --if-present || npx tsc --noEmit || echo "Type check step skipped"'
-      }
-    }
-
-    stage('Unit Tests') {
-      steps {
-        echo '=== Running unit tests ==='
-        sh 'npm test -- --run --reporter=verbose || echo "No tests found, skipping"'
-      }
-      post {
-        always {
-          // publish JUnit-style test results if available
-          junit allowEmptyResults: true, testResults: '**/test-results/**/*.xml'
+        stage('Build Frontend') {
+            steps {
+                // Vite injects these at build time into the JS bundle
+                sh "VITE_GOOGLE_MAPS_API_KEY=${MAPS_KEY} VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_KEY} npm run build"
+            }
         }
-      }
-    }
 
-    stage('Build') {
-      steps {
-        echo '=== Building production bundle ==='
-        sh 'npm run build'
-        echo "Build complete. Artifact: dist/"
-      }
-    }
-
-    stage('Docker Build') {
-      when {
-        anyOf {
-          branch 'main'
-          branch 'develop'
+        stage('Docker Build') {
+            steps {
+                sh "docker build -t ${APP_NAME}:latest ."
+            }
         }
-      }
-      steps {
-        echo "=== Building Docker image: ${DOCKER_IMAGE} ==="
-        sh """
-          docker build \
-            --build-arg NODE_ENV=${NODE_ENV} \
-            -t ${DOCKER_IMAGE} \
-            -t ${DOCKER_IMAGE_LATEST} \
-            .
-        """
-      }
+
+        stage('Remote Deploy') {
+            steps {
+                script {
+                    // 1. Transfer docker-compose to Dev Server
+                    sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${DEV_SERVER}:~/docker-compose.yml"
+                    
+                    // 2. Execute Deployment on Dev Server
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEV_SERVER} "
+                            export POSTGRES_USER=${DB_CREDS_USR}
+                            export POSTGRES_PASSWORD=${DB_CREDS_PSW}
+                            docker-compose up -d db
+                            
+                            echo 'Waiting for PostGIS...'
+                            until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do sleep 2; done
+                            
+                            docker-compose up -d app
+                        "
+                    """
+                }
+            }
+        }
     }
 
-    stage('Deploy – Staging') {
-      when { branch 'develop' }
-      steps {
-        echo '=== Deploying to Staging ==='
-        sh 'docker-compose -f docker-compose.yml up -d --build'
-        sh 'echo "Planzo staging is live at http://localhost:3000"'
-      }
+    post {
+        success { echo "✅ Deployment Complete" }
+        always { cleanWs() }
     }
-
-    stage('Deploy – Production') {
-      when { branch 'main' }
-      steps {
-        echo '=== Deploying to Production ==='
-        // Replace with your production deploy command (e.g. docker push to ECR + ECS update)
-        sh """
-          docker tag ${DOCKER_IMAGE} planzo/${DOCKER_IMAGE_LATEST}
-          echo "Tagged and ready for registry push"
-          docker-compose -f docker-compose.yml up -d --no-build
-        """
-      }
-    }
-  }
-
-  post {
-    success {
-      echo "✅ Pipeline PASSED — ${APP_NAME} build #${BUILD_NUMBER} succeeded."
-      archiveArtifacts artifacts: 'dist/**', allowEmptyArchive: true
-    }
-    failure {
-      echo "❌ Pipeline FAILED — build #${BUILD_NUMBER}. Check console output above."
-    }
-    always {
-      cleanWs()
-    }
-  }
 }
