@@ -18,6 +18,8 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                echo "${env.GIT_LOCAL_BRANCH}"
+                echo "${env.GIT_BRANCH}"
                 checkout scm
             }
         }
@@ -42,7 +44,7 @@ pipeline {
     stage('Remote Deploy') {
         steps {
             script {
-                echo "${env.BRANCH_NAME}"
+      
                 def targetServer = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? DEV_SERVER : QA_SERVER
                 def envName = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? "PRODUCTION (Dev)" : "QA/STAGING"
                 withCredentials([
