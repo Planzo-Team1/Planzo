@@ -4,9 +4,9 @@ services:
     platform: linux/amd64
     container_name: planzo-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: planzo
-      POSTGRES_DB: planzo
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-planzo}
+      POSTGRES_DB: ${POSTGRES_DB:-planzo}
     ports:
       - "5433:5432"
     volumes:
@@ -17,6 +17,16 @@ services:
       timeout: 5s
       retries: 20
 
+  app:
+    image: planzo-web:latest
+    container_name: planzo-app
+    ports:
+      - "80:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-planzo}@db:5432/${POSTGRES_DB:-planzo}
+
 volumes:
   planzo-db-data:
-
