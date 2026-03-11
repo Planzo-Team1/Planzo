@@ -35,11 +35,11 @@ pipeline {
                     // Logic for environment routing
                     if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
                         env.DEPLOY_ENV = 'DEV'
-                        env.TARGET_IP_ID = credentials('DEV_PUBLIC_IP')
+                        env.TARGET_IP_ID = 'DEV_PUBLIC_IP'
                         env.TARGET_SERVER = "${env.DEV_SERVER}"
                     } else {
                         env.DEPLOY_ENV = 'QA'
-                        env.TARGET_IP_ID = credentials('QA_PUBLIC_IP')
+                        env.TARGET_IP_ID = 'QA_PUBLIC_IP'
                         env.TARGET_SERVER = "${env.QA_SERVER}"
                     }
                 }
