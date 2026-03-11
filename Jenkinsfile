@@ -21,21 +21,23 @@ pipeline {
     stages {
       stage('Setup Environment') {
         steps {
- script {
+script {
     checkout scm
     
-    // 1. Force capture the branch from the shell since printenv sees it
-    def rawBranch = sh(script: "echo \$GIT_BRANCH", returnStdout: true).trim()
+    // 1. Capture the output of the shell command into a Groovy variable
+    def branchName = sh(script: "echo \$GIT_BRANCH", returnStdout: true).trim()
     
-    // 2. Clean 'origin/update_deployment_config' to 'update_deployment_config'
-    if (rawBranch && rawBranch != "null") {
-        env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
+    echo "Captured from shell: ${branchName}" // This should NOT be null now
+
+    // 2. Clean and assign to env
+    if (branchName && branchName != "null" && branchName != "") {
+        // Use the last part if it contains a slash (e.g., origin/main -> main)
+        env.BUILD_BRANCH = branchName.contains('/') ? branchName.split('/')[-1] : branchName
     } else {
-        // Fallback for manual builds if GIT_BRANCH is somehow empty
         env.BUILD_BRANCH = "main"
     }
     
-    // 3. Set Environment and Credential IDs
+    // 3. Set the rest of the logic
     env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
     env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
     
