@@ -16,35 +16,16 @@ pipeline {
        BUILD_BRANCH = ""
         DEPLOY_ENV   = ""
         TARGET_IP_ID = ""
+        CC = """${sh(
+                returnStdout: true,
+                script: 'echo "\$GIT_BRANCH"'
+            )}""" 
     }
 
     stages {
       stage('Setup Environment') {
         steps {
-script {
-    checkout scm
-    
-    // 1. Capture the output of the shell command into a Groovy variable
-    def branchName = sh(script: "echo \$GIT_BRANCH", returnStdout: true).trim()
-    
-    echo "Captured from shell: ${branchName}" // This should NOT be null now
-
-    // 2. Clean and assign to env
-    if (branchName && branchName != "null" && branchName != "") {
-        // Use the last part if it contains a slash (e.g., origin/main -> main)
-        env.BUILD_BRANCH = branchName.contains('/') ? branchName.split('/')[-1] : branchName
-    } else {
-        env.BUILD_BRANCH = "main"
-    }
-    
-    // 3. Set the rest of the logic
-    env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
-    env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
-    
-    echo "--- Environment Setup Complete ---"
-    echo "Detected Branch: ${env.BUILD_BRANCH}"
-    echo "Target Env: ${env.DEPLOY_ENV}"
-}
+            echo "${env.CC}"
         }
 
         }
