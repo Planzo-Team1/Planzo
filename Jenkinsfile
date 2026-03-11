@@ -13,24 +13,44 @@ pipeline {
         // Base Servers
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
-        BUILD_BRANCH = "${env.GIT_BRANCH.contains('/') ? env.GIT_BRANCH.split('/')[-1] : env.GIT_BRANCH}"
-        DEPLOY_ENV = "${env.BUILD_BRANCH == 'main' ? 'production' : 'QA'}"
-        TARGET_IP_ID = "${env.DEPLOY_ENV == 'production' ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'}"
-        DEPLOY_URL = credentials("${env.TARGET_IP_ID}")
+       BUILD_BRANCH = ""
+        DEPLOY_ENV   = ""
+        TARGET_IP_ID = ""
     }
 
     stages {
-        stage('Log Variables'){
-            steps{
-    sh """
+      stage('Setup Environment') {
+            steps {
+                script {
+                    // 1. Safely get branch name from GIT_BRANCH or BRANCH_NAME
+                    def rawBranch = env.GIT_BRANCH ?: env.BRANCH_NAME ?: "unknown"
+                    env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
+                    
+                    // 2. Determine Env (main -> production, others -> QA)
+                    env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
+                    
+                    // 3. Set the Credential ID to be used later
+                    env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
+                    
+                    echo "--- Environment Setup Complete ---"
                     echo "Branch: ${env.BUILD_BRANCH}"
-                    echo "DEPLOY_ENV: ${env.DEPLOY_ENV}"
-                    echo "TARGET_IP_ID: ${env.TARGET_IP_ID}"
-                    echo "DEPLOY_URL: ${env.DEPLOY_URL}"
-                """
+                    echo "Target Env: ${env.DEPLOY_ENV}"
+                }
             }
-          
         }
+        stage('Log & Verify') {
+            steps {
+                // Use withCredentials here to dynamically fetch the IP
+                withCredentials([string(credentialsId: "${env.TARGET_IP_ID}", variable: 'SVR_IP')]) {
+                    sh """
+                        echo "Building for Branch: ${env.BUILD_BRANCH}"
+                        echo "Deploying to: ${env.DEPLOY_ENV}"
+                        echo "Using Credential ID: ${env.TARGET_IP_ID}"
+                        echo "Target IP (Masked): ${SVR_IP}"
+                    """
+                }
+            }
+    }
     }
 /*         stage('Checkout') {
             steps {
