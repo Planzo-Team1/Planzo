@@ -21,25 +21,7 @@ pipeline {
     stages {
       stage('Setup Environment') {
             steps {
-              script {
-            // 1. Capture the git metadata into a variable
-            def scmVars = checkout scm
-            
-            // 2. Extract branch from scmVars (this is the most reliable way)
-            // It usually returns 'origin/branch-name'
-            def rawBranch = scmVars.GIT_BRANCH ?: "main"
-            
-            // 3. Clean the branch name
-            env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
-            
-            // 4. Set Environment and Credential IDs
-            env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
-            env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
-            
-            echo "--- Environment Setup Complete ---"
-            echo "Detected Branch: ${env.BUILD_BRANCH}"
-            echo "Target IP ID: ${env.TARGET_IP_ID}"
-        }
+                 sh 'printenv'
             }
         }
         stage('Log & Verify') {
