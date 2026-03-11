@@ -20,6 +20,7 @@ pipeline {
 
     stages {
       stage('Setup Environment') {
+        steps {
  script {
     checkout scm
     
@@ -42,6 +43,8 @@ pipeline {
     echo "Detected Branch: ${env.BUILD_BRANCH}"
     echo "Target Env: ${env.DEPLOY_ENV}"
 }
+        }
+
         }
 
     }
