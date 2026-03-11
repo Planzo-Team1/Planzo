@@ -21,22 +21,25 @@ pipeline {
     stages {
       stage('Setup Environment') {
             steps {
-                checkout scm
-                script {
-                    // 1. Safely get branch name from GIT_BRANCH or BRANCH_NAME
-                    def rawBranch = env.GIT_BRANCH ?: env.BRANCH_NAME ?: "unknown"
-                    env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
-                    
-                    // 2. Determine Env (main -> production, others -> QA)
-                    env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
-                    
-                    // 3. Set the Credential ID to be used later
-                    env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
-                    
-                    echo "--- Environment Setup Complete ---"
-                    echo "Branch: ${env.BUILD_BRANCH}"
-                    echo "Target Env: ${env.DEPLOY_ENV}"
-                }
+              script {
+            // 1. Capture the git metadata into a variable
+            def scmVars = checkout scm
+            
+            // 2. Extract branch from scmVars (this is the most reliable way)
+            // It usually returns 'origin/branch-name'
+            def rawBranch = scmVars.GIT_BRANCH ?: "main"
+            
+            // 3. Clean the branch name
+            env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
+            
+            // 4. Set Environment and Credential IDs
+            env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
+            env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
+            
+            echo "--- Environment Setup Complete ---"
+            echo "Detected Branch: ${env.BUILD_BRANCH}"
+            echo "Target IP ID: ${env.TARGET_IP_ID}"
+        }
             }
         }
         stage('Log & Verify') {
