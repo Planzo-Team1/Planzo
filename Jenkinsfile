@@ -18,7 +18,7 @@ pipeline {
         TARGET_IP_ID = ""
         CC = """${sh(
                 returnStdout: true,
-                script: 'echo "\$GIT_BRANCH"'
+                script: 'echo "\$GIT_BRANCH" | cut -d "/" -f 2'
             )}""" 
     }
 
