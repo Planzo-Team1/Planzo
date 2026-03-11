@@ -13,13 +13,25 @@ pipeline {
         // Base Servers
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
+        BUILD_BRANCH = "${env.GIT_BRANCH.contains('/') ? env.GIT_BRANCH.split('/')[-1] : env.GIT_BRANCH}"
+        DEPLOY_ENV = "${env.BUILD_BRANCH == 'main' ? 'production' : 'QA'}"
+        TARGET_IP_ID = "${env.DEPLOY_ENV == 'production' ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'}"
+        DEPLOY_URL = credentials("${env.TARGET_IP_ID}")
     }
 
     stages {
-        stage('Checkout') {
+        stage('Log Variables'){
+            sh """
+                echo "Branch: ${env.BUILD_BRANCH}"
+                echo "DEPLOY_ENV: ${env.DEPLOY_ENV}"
+                echo "TARGET_IP_ID: ${env.TARGET_IP_ID}"
+                echo "DEPLOY_URL: ${env.DEPLOY_URL}"
+            """
+        }
+    }
+/*         stage('Checkout') {
             steps {
-                echo "${env.GIT_LOCAL_BRANCH}"
-                echo "${env.GIT_BRANCH}"
+                echo "Build Branch: ${env.BUILD_BRANCH}"
                 checkout scm
             }
         }
@@ -45,8 +57,8 @@ pipeline {
         steps {
             script {
       
-                def targetServer = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? DEV_SERVER : QA_SERVER
-                def envName = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? "PRODUCTION (Dev)" : "QA/STAGING"
+                def targetServer = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? DEV_SERVER : QA_SERVER
+                def envName = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? "PRODUCTION (Dev)" : "QA/STAGING"
                 withCredentials([
                     string(credentialsId: 'POSTGRES_USER', variable: 'DB_USER'),
                     string(credentialsId: 'POSTGRES_PASSWORD', variable: 'DB_PASS'),
@@ -80,14 +92,17 @@ pipeline {
             }
         }
     }
-    }
+    } */
 
-    post {
+/*     post {
         success {
-            withCredentials([string(credentialsId: 'PLANZO_SLACK_WEBHOOK', variable: 'SLACK_URL')]) {
+            withCredentials([string(credentialsId: 'PLANZO_SLACK_WEBHOOK', variable: 'SLACK_URL'),  
+                             string(credentialsId: 'QA_PUBLIC_IP', variable: 'QA_IP'),
+                             string(credentialsId: 'DEV_PUBLIC_IP', variable: 'DEV_IP')]) 
+            {
                 sh """
                     curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"✅ *Build #${env.BUILD_NUMBER} Success* \n*Env:* ${env.ENV_LABEL} \n*URL:* http://18.191.174.123"}' \
+                    --data '{"text":"✅ *Build #${env.BUILD_NUMBER} Success* \n*Env:* ${env.ENV_LABEL} \n*URL:* http://${}"}' \
                     ${SLACK_URL}
                 """
             }
@@ -108,5 +123,5 @@ pipeline {
                 sh "docker image prune -f"
             }
         }
-    }
+    } */
 }
