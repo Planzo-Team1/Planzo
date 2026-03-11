@@ -13,9 +13,8 @@ pipeline {
         // Base Servers
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
-       BUILD_BRANCH = ""
-        TARGET_IP_ID = ""
-        CC = """${sh(
+        SLACK_URL    = credentials("PLANZO_SLACK_WEBHOOK")
+        GIT_BRANCH = """${sh(
                 returnStdout: true,
                 script: 'echo "\$GIT_BRANCH" | cut -d "/" -f 2'
             )}""" 
@@ -25,12 +24,15 @@ pipeline {
       stage('Setup Environment') {
         steps{
             script{
-             if(env.CC == 'main'){
+             if(env.GIT_BRANCH == 'main'){
                 env.DEPLOY_ENV = 'DEV'
+                env.TARGET_IP_ID = credentials('DEV_PUBLIC_IP');
+                env.TARGET_SERVER =  "${DEV_SERVER}"
             } else {
                 env.DEPLOY_ENV = 'QA'
+                env.TARGET_IP_ID = credentials('QA_PUBLIC_IP');
+                env.TARGET_SERVER =  "${QA_SERVER}"
             }
-            echo "${env.DEPLOY_ENV}"
             }
            
         }
@@ -40,7 +42,9 @@ pipeline {
         steps{
 
             echo "Logging ${env.DEPLOY_ENV}"
-           
+            echo "TARGET ${env.TARGET_IP_ID}"
+            echo "SLACK ${env.SLACK_URL}"
+            echo "SERVER ${env.TARGET_SERVER}"
         }
       
         }
