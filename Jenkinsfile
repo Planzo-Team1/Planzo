@@ -21,12 +21,15 @@ pipeline {
 
     stages {
         stage('Log Variables'){
-            sh """
-                echo "Branch: ${env.BUILD_BRANCH}"
-                echo "DEPLOY_ENV: ${env.DEPLOY_ENV}"
-                echo "TARGET_IP_ID: ${env.TARGET_IP_ID}"
-                echo "DEPLOY_URL: ${env.DEPLOY_URL}"
-            """
+            steps{
+    sh """
+                    echo "Branch: ${env.BUILD_BRANCH}"
+                    echo "DEPLOY_ENV: ${env.DEPLOY_ENV}"
+                    echo "TARGET_IP_ID: ${env.TARGET_IP_ID}"
+                    echo "DEPLOY_URL: ${env.DEPLOY_URL}"
+                """
+            }
+          
         }
     }
 /*         stage('Checkout') {
