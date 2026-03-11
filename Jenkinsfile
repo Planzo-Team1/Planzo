@@ -20,23 +20,30 @@ pipeline {
 
     stages {
       stage('Setup Environment') {
-            steps {
-                 sh 'printenv'
-            }
-        }
-        stage('Log & Verify') {
-            steps {
-                // Use withCredentials here to dynamically fetch the IP
-                withCredentials([string(credentialsId: "${env.TARGET_IP_ID}", variable: 'SVR_IP')]) {
-                    sh """
-                        echo "Building for Branch: ${env.BUILD_BRANCH}"
-                        echo "Deploying to: ${env.DEPLOY_ENV}"
-                        echo "Using Credential ID: ${env.TARGET_IP_ID}"
-                        echo "Target IP (Masked): ${SVR_IP}"
-                    """
-                }
-            }
+ script {
+    checkout scm
+    
+    // 1. Force capture the branch from the shell since printenv sees it
+    def rawBranch = sh(script: "echo \$GIT_BRANCH", returnStdout: true).trim()
+    
+    // 2. Clean 'origin/update_deployment_config' to 'update_deployment_config'
+    if (rawBranch && rawBranch != "null") {
+        env.BUILD_BRANCH = rawBranch.contains('/') ? rawBranch.split('/')[-1] : rawBranch
+    } else {
+        // Fallback for manual builds if GIT_BRANCH is somehow empty
+        env.BUILD_BRANCH = "main"
     }
+    
+    // 3. Set Environment and Credential IDs
+    env.DEPLOY_ENV = (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') ? 'production' : 'QA'
+    env.TARGET_IP_ID = (env.DEPLOY_ENV == 'production') ? 'DEV_PUBLIC_IP' : 'QA_PUBLIC_IP'
+    
+    echo "--- Environment Setup Complete ---"
+    echo "Detected Branch: ${env.BUILD_BRANCH}"
+    echo "Target Env: ${env.DEPLOY_ENV}"
+}
+        }
+
     }
 /*         stage('Checkout') {
             steps {
