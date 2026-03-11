@@ -9,99 +9,113 @@ pipeline {
 
     environment {
         APP_NAME     = 'planzo-web'
-        DOCKER_IMAGE = "${APP_NAME}:latest"
-        // Base Servers
+        DOCKER_IMAGE = "${env.APP_NAME}:latest"
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
+        
+        // Use .trim() to remove trailing newlines from shell output
+        GIT_BRANCH = """${sh(
+                returnStdout: true,
+                script: 'echo "\$GIT_BRANCH" | sed "s|origin/||"'
+            ).trim()}""" 
+
+        // Corrected syntax for credentials (using = instead of :)
+        SLACK_URL  = credentials("PLANZO_SLACK_WEBHOOK")
+        MAPS_KEY   = credentials('VITE_GOOGLE_MAPS_API_KEY')
+        STRIPE_KEY = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
+        DB_USER    = credentials('POSTGRES_USER')
+        DB_PASS    = credentials('POSTGRES_PASSWORD')
+        DB_NAME    = credentials('POSTGRES_DB')
     }
 
     stages {
+        stage('Setup Environment') {
+            steps {
+                script {
+                    // Logic for environment routing
+                    if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
+                        env.DEPLOY_ENV = 'DEV'
+                        env.TARGET_IP_ID = 'DEV_PUBLIC_IP'
+                        env.TARGET_SERVER = "${env.DEV_SERVER}"
+                    } else {
+                        env.DEPLOY_ENV = 'QA'
+                        env.TARGET_IP_ID = 'QA_PUBLIC_IP'
+                        env.TARGET_SERVER = "${env.QA_SERVER}"
+                    }
+                }
+            }
+        }
+        
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
-        
-     stage('Docker Build & Package') {
+
+        stage('Docker Build & Package') {
             steps {
-                echo "=== Building Image (NPM Install & Vite Build happen here) ==="
-                // Pass your API keys as Build Args so the Dockerfile can use thems
-                withCredentials([
-                    string(credentialsId: 'VITE_GOOGLE_MAPS_API_KEY', variable: 'MAPS_KEY'),
-                    string(credentialsId: 'VITE_STRIPE_PUBLISHABLE_KEY', variable: 'STRIPE_KEY')
-                ]) {
-                    sh """
-                        docker build \
-                        --build-arg VITE_GOOGLE_MAPS_API_KEY=${MAPS_KEY} \
-                        --build-arg VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_KEY} \
-                        -t ${DOCKER_IMAGE} .
-                    """
-                }
+                echo "=== Building Image === "
+                sh """
+                    docker build \
+                    --build-arg VITE_GOOGLE_MAPS_API_KEY=${env.MAPS_KEY} \
+                    --build-arg VITE_STRIPE_PUBLISHABLE_KEY=${env.STRIPE_KEY} \
+                    -t ${env.DOCKER_IMAGE} .
+                """
             }
         }
-    stage('Remote Deploy') {
-        steps {
-            script {
-                def targetServer = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? DEV_SERVER : QA_SERVER
-                def envName = (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') ? "PRODUCTION (Dev)" : "QA/STAGING"
-                withCredentials([
-                    string(credentialsId: 'POSTGRES_USER', variable: 'DB_USER'),
-                    string(credentialsId: 'POSTGRES_PASSWORD', variable: 'DB_PASS'),
-                    string(credentialsId: 'POSTGRES_DB', variable: 'DB_NAME')
-                ]) {
-                    // 1. Transfer Image & Compose file
-                    sh "docker save ${DOCKER_IMAGE} | ssh -o StrictHostKeyChecking=no ${targetServer} 'docker load'"
-                    sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${targetServer}:~/docker-compose.yml"
-                    
-                    // 2. Deploy with Health Check
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${targetServer} "
-                            export POSTGRES_USER=${DB_USER}
-                            export POSTGRES_PASSWORD=${DB_PASS}
-                            export POSTGRES_DB=${DB_NAME}
 
-                            docker compose up -d db
-                            
-                            echo 'Waiting for PostGIS health...'
-                            until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
-                                sleep 2
-                            done
+        stage('Remote Deploy') {
+            steps {
+                // Transfer Image & Compose file
+                sh "docker save ${env.DOCKER_IMAGE} | ssh -o StrictHostKeyChecking=no ${env.TARGET_SERVER} 'docker load'"
+                sh "scp -o StrictHostKeyChecking=no docker-compose.yml ${env.TARGET_SERVER}:~/docker-compose.yml"
+                
+                // Deploy with Health Check
+                sh """
+                    ssh -o StrictHostKeyChecking=no ${env.TARGET_SERVER} "
+                        export POSTGRES_USER=${env.DB_USER}
+                        export POSTGRES_PASSWORD=${env.DB_PASS}
+                        export POSTGRES_DB=${env.DB_NAME}
 
-                            docker compose up -d app
-                            docker image prune -f
-                        "
-                    """
-                    env.DEPLOY_TARGET_IP = targetServer.split('@')[1]
-                    env.ENV_LABEL = envName
-                }
+                        docker compose up -d db
+                        
+                        echo 'Waiting for PostGIS health...'
+                        until [ \\\$(docker inspect -f '{{.State.Health.Status}}' planzo-db) == 'healthy' ]; do 
+                            sleep 2
+                        done
+
+                        docker compose up -d app
+                        docker image prune -f
+                    "
+                """
             }
         }
-    }
     }
 
     post {
-        success {
-            withCredentials([string(credentialsId: 'PLANZO_SLACK_WEBHOOK', variable: 'SLACK_URL')]) {
-                sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"✅ *Build #${env.BUILD_NUMBER} Success* \n*Env:* ${env.ENV_LABEL} \n*URL:* http://18.191.174.123"}' \
-                    ${SLACK_URL}
-                """
+       success {
+            script {
+                // Dynamically fetch the actual IP using the ID stored in TARGET_IP_ID
+                withCredentials([string(credentialsId: "${env.TARGET_IP_ID}", variable: 'ACTUAL_IP')]) {
+                    sh """
+                        curl -X POST -H 'Content-type: application/json' \
+                        --data '{"text":"✅ *Build #${env.BUILD_NUMBER} Success* \\n*Env:* ${env.DEPLOY_ENV} \\n*URL:* http://${ACTUAL_IP}"}' \
+                        ${env.SLACK_URL}
+                    """
+                }
             }
         }
         failure {
-            withCredentials([string(credentialsId: 'PLANZO_SLACK_WEBHOOK', variable: 'SLACK_URL')]) {
-                sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"❌ *Build #${env.BUILD_NUMBER} FAILED* \n*Branch:* ${env.BRANCH_NAME}"}' \
-                    ${SLACK_URL}
-                """
-            }
+            sh """
+                curl -X POST -H 'Content-type: application/json' \
+                --data '{"text":"❌ *Build #${env.BUILD_NUMBER} FAILED* \\n*Branch:* ${env.GIT_BRANCH}"}' \
+                ${env.SLACK_URL}
+            """
         }
         always {
             script { 
                 cleanWs()
-                sh "docker rmi ${DOCKER_IMAGE} || true"
+                sh "docker rmi ${env.DOCKER_IMAGE} || true"
                 sh "docker image prune -f"
             }
         }
