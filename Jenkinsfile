@@ -43,7 +43,7 @@ pipeline {
 
             echo "Logging ${env.DEPLOY_ENV}"
             echo "TARGET ${env.TARGET_IP_ID}"
-            echo "SLACK ${env.SLACK_URL}"
+            echo 'SLACK ${env.SLACK_URL}'
             echo "SERVER ${env.TARGET_SERVER}"
         }
       
