@@ -14,7 +14,6 @@ pipeline {
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
        BUILD_BRANCH = ""
-        DEPLOY_ENV   = ""
         TARGET_IP_ID = ""
         CC = """${sh(
                 returnStdout: true,
