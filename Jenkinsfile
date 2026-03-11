@@ -21,6 +21,7 @@ pipeline {
     stages {
       stage('Setup Environment') {
             steps {
+                checkout scm
                 script {
                     // 1. Safely get branch name from GIT_BRANCH or BRANCH_NAME
                     def rawBranch = env.GIT_BRANCH ?: env.BRANCH_NAME ?: "unknown"
