@@ -25,11 +25,14 @@ pipeline {
     stages {
       stage('Setup Environment') {
         steps{
-      if(env.CC == 'main'){
+            script{
+ if(env.CC == 'main'){
                 env.DEPLOY_ENV = 'DEV'
             } else {
                 env.DEPLOY_ENV = 'QA'
             }
+            }
+           
             echo "${env.DEPLOY_ENV}"
         }
       
