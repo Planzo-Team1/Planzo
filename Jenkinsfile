@@ -12,8 +12,6 @@ pipeline {
         DOCKER_IMAGE = "${env.APP_NAME}:latest"
         DEV_SERVER   = "ubuntu@172.31.15.225"
         QA_SERVER    = "ubuntu@172.31.3.1"
-        
-        // Use .trim() to remove trailing newlines from shell output
         GIT_BRANCH = """${sh(
                 returnStdout: true,
                 script: 'echo "\$GIT_BRANCH" | sed "s|origin/||"'
