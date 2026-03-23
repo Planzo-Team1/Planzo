@@ -51,7 +51,7 @@ pipeline {
         }
         stage('TestRigor Smoke Test') {
             steps {
-                sh """
+                sh '''
                 #!/bin/bash
                     curl -X POST \
                     -H 'Content-type: application/json' \
@@ -103,7 +103,7 @@ pipeline {
                         esac
                     sleep 10
                     done
-                """
+                '''
             }
         }
 
