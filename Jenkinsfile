@@ -17,7 +17,6 @@ pipeline {
                 script: 'echo "\$GIT_BRANCH" | sed "s|origin/||"'
             ).trim()}""" 
 
-        // Corrected syntax for credentials (using = instead of :)
         SLACK_URL  = credentials("PLANZO_SLACK_WEBHOOK")
         MAPS_KEY   = credentials('VITE_GOOGLE_MAPS_API_KEY')
         STRIPE_KEY = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
