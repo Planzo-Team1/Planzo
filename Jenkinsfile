@@ -29,6 +29,7 @@ pipeline {
         stage('Setup Environment') {
             steps {
                 script {
+                    sh "docker system prune -f --volumes || true"
                     // Logic for environment routing
                     if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
                         env.DEPLOY_ENV = 'DEV'
@@ -117,7 +118,20 @@ pipeline {
                 """
             }
         }
-
+        stage('Input Approval') {
+            when { 
+                anyOf { branch 'main'; branch 'master' } 
+            }
+            steps {
+                script {
+                    def result = input(
+                        message: "Proceed with deployment to ${env.DEPLOY_ENV}?",
+                        ok: "Deploy Now",
+                        submitter: "admin,kevin,jenkins_capstone" // Restrict who can approve
+                    )
+                }
+            }
+        }
         stage('Remote Deploy') {
             steps {
                 // Transfer Image & Compose file
@@ -142,6 +156,14 @@ pipeline {
                         docker image prune -f
                     "
                 """
+            }
+        }
+        
+        stage('Artifact Archiving') {
+            steps {
+                // ARTIFACT ARCHIVING: Save compose file and docker logs for debugging
+                sh "docker logs ${env.APP_NAME} > build-log.txt || true"
+                archiveArtifacts artifacts: 'docker-compose.yml, build-log.txt', fingerprint: true
             }
         }
     }
