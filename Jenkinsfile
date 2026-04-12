@@ -17,7 +17,6 @@ pipeline {
                 script: 'echo "\$GIT_BRANCH" | sed "s|origin/||"'
             ).trim()}""" 
 
-        // Corrected syntax for credentials (using = instead of :)
         SLACK_URL  = credentials("PLANZO_SLACK_WEBHOOK")
         MAPS_KEY   = credentials('VITE_GOOGLE_MAPS_API_KEY')
         STRIPE_KEY = credentials('VITE_STRIPE_PUBLISHABLE_KEY')
@@ -30,6 +29,7 @@ pipeline {
         stage('Setup Environment') {
             steps {
                 script {
+                    sh "docker system prune -f --volumes || true"
                     // Logic for environment routing
                     if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
                         env.DEPLOY_ENV = 'DEV'
@@ -49,6 +49,63 @@ pipeline {
                 checkout scm
             }
         }
+        stage('TestRigor Smoke Test') {
+            steps {
+                sh '''
+                #!/bin/bash
+                    curl -X POST \
+                    -H 'Content-type: application/json' \
+                    -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' \
+                    --data '{"forceCancelPreviousTesting":true,"storedValues":{"storedValueName1":"Value"}}' \
+                    https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/retest
+
+                    sleep 10
+
+                    while true
+                    do
+                    echo " "
+                    echo "==================================="
+                    echo " Checking run status"
+                    echo "==================================="
+                    response=$(curl -i -o - -s -X GET 'https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/status' -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' -H 'Accept: application/json')
+                    code=$(echo "$response" | grep HTTP |  awk '{print $2}')
+                    body=$(echo "$response" | sed -n '/{/,/}/p')
+                    echo "Status code: " $code
+                    echo "Response: " $body
+                    case $code in
+                        4*|5*)
+                        # 400 or 500 errors
+                        echo "Error calling API"
+                        exit 1
+                        ;;
+                        200)
+                        # 200: successfully finished
+                        echo "Test finished successfully"
+                        exit 0
+                        ;;
+                        227|228)
+                        # 227: New - 228: In progress
+                        echo "Test is not finished yet"
+                        ;;
+                        229)
+                        # 229: Canceled
+                        echo "Test canceled"
+                        exit 1
+                        ;;
+                        230)
+                        # 230: Failed
+                        echo "Test finished but failed"
+                        exit 1
+                        ;;
+                        *)
+                        echo "Unknown status"
+                        exit 1
+                        esac
+                    sleep 10
+                    done
+                '''
+            }
+        }
 
         stage('Docker Build & Package') {
             steps {
@@ -61,7 +118,20 @@ pipeline {
                 """
             }
         }
-
+        stage('Input Approval') {
+            when { 
+                anyOf { branch 'main'; branch 'master' } 
+            }
+            steps {
+                script {
+                    def result = input(
+                        message: "Proceed with deployment to ${env.DEPLOY_ENV}?",
+                        ok: "Deploy Now",
+                        submitter: "admin,kevin,jenkins_capstone" // Restrict who can approve
+                    )
+                }
+            }
+        }
         stage('Remote Deploy') {
             steps {
                 // Transfer Image & Compose file
@@ -86,6 +156,14 @@ pipeline {
                         docker image prune -f
                     "
                 """
+            }
+        }
+        
+        stage('Artifact Archiving') {
+            steps {
+                // ARTIFACT ARCHIVING: Save compose file and docker logs for debugging
+                sh "docker logs ${env.APP_NAME} > build-log.txt || true"
+                archiveArtifacts artifacts: 'docker-compose.yml, build-log.txt', fingerprint: true
             }
         }
     }
