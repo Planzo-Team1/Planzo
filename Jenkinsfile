@@ -26,86 +26,99 @@ pipeline {
     }
 
     stages {
-        stage('Setup Environment') {
-            steps {
-                script {
-                    sh "docker system prune -f --volumes || true"
-                    // Logic for environment routing
-                    if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
-                        env.DEPLOY_ENV = 'DEV'
-                        env.TARGET_IP_ID = 'DEV_PUBLIC_IP'
-                        env.TARGET_SERVER = "${env.DEV_SERVER}"
-                    } else {
-                        env.DEPLOY_ENV = 'QA'
-                        env.TARGET_IP_ID = 'QA_PUBLIC_IP'
-                        env.TARGET_SERVER = "${env.QA_SERVER}"
+        stage('Initialize') {
+            parallel {
+                stage('Setup Environment') {
+                    steps {
+                        script {
+                            sh "docker system prune -f --volumes || true"
+                            if (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') {
+                                env.DEPLOY_ENV = 'DEV'
+                                env.TARGET_IP_ID = 'DEV_PUBLIC_IP'
+                                env.TARGET_SERVER = "${env.DEV_SERVER}"
+                            } else {
+                                env.DEPLOY_ENV = 'QA'
+                                env.TARGET_IP_ID = 'QA_PUBLIC_IP'
+                                env.TARGET_SERVER = "${env.QA_SERVER}"
+                            }
+                        }
+                    }
+                }
+                stage('Identify Build') {
+                    steps {
+                        script {
+                            currentBuild.displayName = "#${env.BUILD_NUMBER} - ${env.GIT_BRANCH}"
+                            currentBuild.description = "Deployed to ${env.DEPLOY_ENV}"
+                        }
                     }
                 }
             }
         }
-        
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
-        stage('TestRigor Smoke Test') {
-            steps {
-                sh '''
-                #!/bin/bash
-                    curl -X POST \
-                    -H 'Content-type: application/json' \
-                    -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' \
-                    --data '{"forceCancelPreviousTesting":true,"storedValues":{"storedValueName1":"Value"}}' \
-                    https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/retest
+        stage('Parallel Build & Test') {
+            failFast true
+            parallel {
+            stage('TestRigor Smoke Test') {
+                steps {
+                    sh '''
+                    #!/bin/bash
+                        curl -X POST \
+                        -H 'Content-type: application/json' \
+                        -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' \
+                        --data '{"forceCancelPreviousTesting":true,"storedValues":{"storedValueName1":"Value"}}' \
+                        https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/retest
 
-                    sleep 10
+                        sleep 10
 
-                    while true
-                    do
-                    echo " "
-                    echo "==================================="
-                    echo " Checking run status"
-                    echo "==================================="
-                    response=$(curl -i -o - -s -X GET 'https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/status' -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' -H 'Accept: application/json')
-                    code=$(echo "$response" | grep HTTP |  awk '{print $2}')
-                    body=$(echo "$response" | sed -n '/{/,/}/p')
-                    echo "Status code: " $code
-                    echo "Response: " $body
-                    case $code in
-                        4*|5*)
-                        # 400 or 500 errors
-                        echo "Error calling API"
-                        exit 1
-                        ;;
-                        200)
-                        # 200: successfully finished
-                        echo "Test finished successfully"
-                        exit 0
-                        ;;
-                        227|228)
-                        # 227: New - 228: In progress
-                        echo "Test is not finished yet"
-                        ;;
-                        229)
-                        # 229: Canceled
-                        echo "Test canceled"
-                        exit 1
-                        ;;
-                        230)
-                        # 230: Failed
-                        echo "Test finished but failed"
-                        exit 1
-                        ;;
-                        *)
-                        echo "Unknown status"
-                        exit 1
-                        esac
-                    sleep 10
-                    done
-                '''
+                        while true
+                        do
+                        echo " "
+                        echo "==================================="
+                        echo " Checking run status"
+                        echo "==================================="
+                        response=$(curl -i -o - -s -X GET 'https://api.testrigor.com/api/v1/apps/MGx3fTfu2bbPSyiCC/status' -H 'auth-token: ed3b5a4b-c84e-48ac-9047-3035d86d6f6b' -H 'Accept: application/json')
+                        code=$(echo "$response" | grep HTTP |  awk '{print $2}')
+                        body=$(echo "$response" | sed -n '/{/,/}/p')
+                        echo "Status code: " $code
+                        echo "Response: " $body
+                        case $code in
+                            4*|5*)
+                            # 400 or 500 errors
+                            echo "Error calling API"
+                            exit 1
+                            ;;
+                            200)
+                            # 200: successfully finished
+                            echo "Test finished successfully"
+                            exit 0
+                            ;;
+                            227|228)
+                            # 227: New - 228: In progress
+                            echo "Test is not finished yet"
+                            ;;
+                            229)
+                            # 229: Canceled
+                            echo "Test canceled"
+                            exit 1
+                            ;;
+                            230)
+                            # 230: Failed
+                            echo "Test finished but failed"
+                            exit 1
+                            ;;
+                            *)
+                            echo "Unknown status"
+                            exit 1
+                            esac
+                        sleep 10
+                        done
+                    '''
+                }
             }
-        }
 
         stage('Docker Build & Package') {
             steps {
@@ -118,17 +131,27 @@ pipeline {
                 """
             }
         }
-        stage('Input Approval') {
-            when { 
-                anyOf { branch 'main'; branch 'master' } 
-            }
-            steps {
-                script {
-                    def result = input(
-                        message: "Proceed with deployment to ${env.DEPLOY_ENV}?",
-                        ok: "Deploy Now",
-                        submitter: "admin,kevin,jenkins_capstone" // Restrict who can approve
-                    )
+        }
+        }
+        stage('Approval & Notification') {
+            parallel {
+                stage('Input Approval') {
+                    when { expression { return (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') } }
+                    steps {
+                        input message: "Proceed with deployment to ${env.DEPLOY_ENV}?",
+                              ok: "Deploy Now",
+                              submitter: "admin,kevin,jenkins_capstone"
+                    }
+                }
+                stage('Notify Slack for Approval') {
+                    when { expression { return (env.GIT_BRANCH == 'main') } }
+                    steps {
+                        sh """
+                            curl -X POST -H 'Content-type: application/json' \
+                            --data '{"text":"⚠️ *Build #${env.BUILD_NUMBER} Awaiting Approval*\\n*Approve here:* ${env.BUILD_URL}input"}' \
+                            ${env.SLACK_URL}
+                        """
+                    }
                 }
             }
         }
@@ -158,11 +181,11 @@ pipeline {
                 """
             }
         }
-        
+
         stage('Artifact Archiving') {
             steps {
                 // ARTIFACT ARCHIVING: Save compose file and docker logs for debugging
-                sh "docker logs ${env.APP_NAME} > build-log.txt || true"
+                sh "docker logs ${env.DOCKER_IMAGE} > build-log.txt || true"
                 archiveArtifacts artifacts: 'docker-compose.yml, build-log.txt', fingerprint: true
             }
         }
