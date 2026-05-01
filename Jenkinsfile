@@ -43,7 +43,16 @@ pipeline {
                 }
             }
         }
-        
+        stage('Identify Build') {
+            steps {
+                script {
+                    // Renames the build to "#42 - update_deployment_config"
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} - ${env.GIT_BRANCH}"
+                    // Adds a description visible in the history
+                    currentBuild.description = "Deployed to ${env.DEPLOY_ENV} by ${env.BUILD_USER_ID ?: 'Webhook'}"
+                }
+            }
+        }
         stage('Checkout') {
             steps {
                 checkout scm
@@ -120,7 +129,9 @@ pipeline {
         }
         stage('Input Approval') {
             when { 
-                anyOf { branch 'main'; branch 'master' } 
+                expression { 
+                    return (env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'master') 
+                }
             }
             steps {
                 script {
@@ -130,6 +141,16 @@ pipeline {
                         submitter: "admin,kevin,jenkins_capstone" // Restrict who can approve
                     )
                 }
+            }
+        }
+        stage('Notify Slack for Approval') {
+            when { expression { return (env.GIT_BRANCH == 'main') } }
+            steps {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"⚠️ *Build #${env.BUILD_NUMBER} is Awaiting Approval*\\n*Branch:* ${env.GIT_BRANCH}\\n*Approve here:* ${env.BUILD_URL}input"}' \
+                    ${env.SLACK_URL}
+                """
             }
         }
         stage('Remote Deploy') {
@@ -158,11 +179,11 @@ pipeline {
                 """
             }
         }
-        
+
         stage('Artifact Archiving') {
             steps {
                 // ARTIFACT ARCHIVING: Save compose file and docker logs for debugging
-                sh "docker logs ${env.APP_NAME} > build-log.txt || true"
+                sh "docker logs ${env.DOCKER_IMAGE} > build-log.txt || true"
                 archiveArtifacts artifacts: 'docker-compose.yml, build-log.txt', fingerprint: true
             }
         }
