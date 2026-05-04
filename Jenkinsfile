@@ -59,7 +59,7 @@ pipeline {
                 checkout scm
             }
         }
-        stage('Parallel Build & Test') {
+        stage('Parallel Build & Tests') {
             failFast true
             parallel {
             
