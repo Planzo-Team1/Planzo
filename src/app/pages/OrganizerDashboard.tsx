@@ -1,10 +1,13 @@
 import React, { useState } from "react";
 import {
     Plus, Users, DollarSign, BarChart2, Edit, Trash2, Eye, Calendar,
-    X, Check, Send, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, BellRing
+    X, Check, Send, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, BellRing,
+    QrCode, ScanLine, AlertTriangle
 } from "lucide-react";
 import { MOCK_BOOKINGS } from "../mock-data";
-import { useEvents, useAuth } from "../store";
+import { useEvents, useAuth, useTickets } from "../store";
+import { verifyTicketPayload } from "../lib/tickets";
+import { QrScanner } from "../components/qr-scanner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 const revenueData = [
@@ -26,15 +29,26 @@ const initForm: CreateForm = {
 
 type EditForm = { title: string; date: string; venue: string };
 
+type VerifyState =
+    | { kind: "idle" }
+    | { kind: "ok"; ticket: { id: string; eventTitle: string; tierName: string; userName: string; eventDate: string; checkedInAt?: string } }
+    | { kind: "warn"; message: string }
+    | { kind: "error"; message: string };
+
 export function OrganizerDashboard() {
     const { currentUser } = useAuth();
     const { events: allEvents, addEvent, updateEvent, deleteEvent } = useEvents();
+    const { findTicketById, checkInTicket } = useTickets();
     const events = allEvents.filter(e => e.organizerId === currentUser?.id);
     const [localBookings, setLocalBookings] = useState(MOCK_BOOKINGS.filter(b => events.some(e => e.id === b.eventId)));
     const [showCreate, setShowCreate] = useState(false);
     const [showEdit, setShowEdit] = useState(false);
     const [showSendUpdate, setShowSendUpdate] = useState(false);
     const [showRegistrations, setShowRegistrations] = useState(false);
+    const [showVerify, setShowVerify] = useState(false);
+    const [verifyMode, setVerifyMode] = useState<"camera" | "manual">("camera");
+    const [verifyState, setVerifyState] = useState<VerifyState>({ kind: "idle" });
+    const [manualPayload, setManualPayload] = useState("");
     const [form, setForm] = useState<CreateForm>(initForm);
     const [editForm, setEditForm] = useState<EditForm>({ title: "", date: "", venue: "" });
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -42,6 +56,54 @@ export function OrganizerDashboard() {
     const [updateMsg, setUpdateMsg] = useState("");
     const [updateSent, setUpdateSent] = useState(false);
     const [updateLoading, setUpdateLoading] = useState(false);
+
+    const organizerEventIds = new Set(events.map((e) => e.id));
+
+    const handleScanResult = (raw: string) => {
+        const verified = verifyTicketPayload(raw);
+        if (!verified.ok) {
+            setVerifyState({ kind: "error", message: verified.reason });
+            return;
+        }
+        const ticket = findTicketById(verified.payload.id);
+        if (!ticket) {
+            setVerifyState({ kind: "error", message: "Ticket not found in this device's records" });
+            return;
+        }
+        if (organizerEventIds.size > 0 && !organizerEventIds.has(ticket.eventId)) {
+            setVerifyState({ kind: "error", message: `Ticket is for an event you don't organize: "${ticket.eventTitle}"` });
+            return;
+        }
+        const result = checkInTicket(ticket.id);
+        if (!result.ok) {
+            setVerifyState({
+                kind: "warn",
+                message: result.reason,
+            });
+            return;
+        }
+        setVerifyState({
+            kind: "ok",
+            ticket: {
+                id: result.ticket.id,
+                eventTitle: result.ticket.eventTitle,
+                tierName: result.ticket.tierName,
+                userName: result.ticket.userName,
+                eventDate: result.ticket.eventDate,
+                checkedInAt: result.ticket.checkedInAt,
+            },
+        });
+    };
+
+    const resetVerify = () => {
+        setVerifyState({ kind: "idle" });
+        setManualPayload("");
+    };
+
+    const closeVerify = () => {
+        setShowVerify(false);
+        resetVerify();
+    };
 
     const stats = [
         { label: "Active Events", value: events.filter(e => e.status !== "draft").length, icon: Calendar, color: "#f97316" },
@@ -129,7 +191,11 @@ export function OrganizerDashboard() {
                         <h1 className="text-2xl font-bold mb-1" style={{ fontFamily: "'Outfit',sans-serif", color: "#1a0a00" }}>Organizer Dashboard</h1>
                         <p className="text-sm" style={{ color: "#78716c" }}>Create, manage, and track your events</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                        <button onClick={() => { setShowVerify(true); resetVerify(); setVerifyMode("camera"); }} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold"
+                            style={{ background: "rgba(74,222,128,0.12)", color: "#16a34a", border: "1px solid rgba(74,222,128,0.3)" }}>
+                            <ScanLine size={14} /> Verify Tickets
+                        </button>
                         <button onClick={() => setShowRegistrations(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold"
                             style={{ background: "rgba(249,115,22,0.1)", color: "#f97316", border: "1px solid rgba(249,115,22,0.25)" }}>
                             <Users size={14} /> Registrations
@@ -401,6 +467,131 @@ export function OrganizerDashboard() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Verify Tickets Modal */}
+            {showVerify && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)" }}
+                    onClick={(e) => { if (e.target === e.currentTarget) closeVerify(); }}>
+                    <div className="w-full max-w-md rounded-2xl p-6" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-2">
+                                <ScanLine size={18} style={{ color: "#16a34a" }} />
+                                <h2 className="text-base font-bold" style={{ color: "#1a0a00" }}>Verify Ticket</h2>
+                            </div>
+                            <button onClick={closeVerify}><X size={18} style={{ color: "#78716c" }} /></button>
+                        </div>
+
+                        <div className="flex gap-2 mb-4">
+                            {(["camera", "manual"] as const).map((m) => (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => { setVerifyMode(m); resetVerify(); }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium capitalize"
+                                    style={{
+                                        background: verifyMode === m ? "rgba(74,222,128,0.15)" : "var(--color-bg-raised)",
+                                        color: verifyMode === m ? "#16a34a" : "#78716c",
+                                        border: `1px solid ${verifyMode === m ? "rgba(74,222,128,0.35)" : "rgba(249,115,22,0.15)"}`,
+                                    }}
+                                >
+                                    {m === "camera" ? <ScanLine size={12} /> : <QrCode size={12} />}
+                                    {m === "camera" ? "Camera Scan" : "Manual Code"}
+                                </button>
+                            ))}
+                        </div>
+
+                        {verifyMode === "camera" && (
+                            <QrScanner
+                                paused={verifyState.kind === "ok" || verifyState.kind === "warn"}
+                                onResult={handleScanResult}
+                            />
+                        )}
+
+                        {verifyMode === "manual" && (
+                            <form
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    if (manualPayload.trim()) handleScanResult(manualPayload.trim());
+                                }}
+                                className="space-y-3"
+                            >
+                                <label className="block text-xs font-medium" style={{ color: "#92400e" }}>
+                                    Paste the QR payload or enter the ticket ID
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    value={manualPayload}
+                                    onChange={(e) => setManualPayload(e.target.value)}
+                                    placeholder='{"v":1,"id":"TK-...","sig":"..."}'
+                                    className="w-full px-3 py-2 rounded-xl text-xs font-mono outline-none resize-none"
+                                    style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }}
+                                />
+                                <button
+                                    type="submit"
+                                    className="w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                                    style={{ background: "linear-gradient(135deg,#16a34a,#059669)", color: "#fff" }}
+                                >
+                                    <Check size={14} /> Verify
+                                </button>
+                            </form>
+                        )}
+
+                        {verifyState.kind !== "idle" && (
+                            <div
+                                className="mt-4 p-4 rounded-xl flex items-start gap-3"
+                                style={{
+                                    background:
+                                        verifyState.kind === "ok"
+                                            ? "rgba(22,163,74,0.1)"
+                                            : verifyState.kind === "warn"
+                                              ? "rgba(251,191,36,0.12)"
+                                              : "rgba(239,68,68,0.1)",
+                                    border: `1px solid ${
+                                        verifyState.kind === "ok"
+                                            ? "rgba(22,163,74,0.35)"
+                                            : verifyState.kind === "warn"
+                                              ? "rgba(251,191,36,0.35)"
+                                              : "rgba(239,68,68,0.35)"
+                                    }`,
+                                }}
+                            >
+                                {verifyState.kind === "ok" ? (
+                                    <Check size={18} style={{ color: "#16a34a", flexShrink: 0, marginTop: 2 }} />
+                                ) : verifyState.kind === "warn" ? (
+                                    <AlertTriangle size={18} style={{ color: "#d97706", flexShrink: 0, marginTop: 2 }} />
+                                ) : (
+                                    <X size={18} style={{ color: "#dc2626", flexShrink: 0, marginTop: 2 }} />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                    {verifyState.kind === "ok" ? (
+                                        <>
+                                            <p className="text-sm font-bold" style={{ color: "#15803d" }}>Checked in successfully</p>
+                                            <p className="text-xs mt-1" style={{ color: "#1a0a00" }}>{verifyState.ticket.userName} · {verifyState.ticket.eventTitle}</p>
+                                            <p className="text-xs" style={{ color: "#78716c" }}>{verifyState.ticket.tierName} · {verifyState.ticket.eventDate}</p>
+                                            <p className="text-[10px] font-mono mt-1" style={{ color: "#15803d" }}>{verifyState.ticket.id}</p>
+                                        </>
+                                    ) : verifyState.kind === "warn" ? (
+                                        <p className="text-sm font-medium" style={{ color: "#92400e" }}>{verifyState.message}</p>
+                                    ) : (
+                                        <p className="text-sm font-medium" style={{ color: "#991b1b" }}>{verifyState.message}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {verifyState.kind !== "idle" && (
+                            <button
+                                type="button"
+                                onClick={resetVerify}
+                                className="mt-3 w-full py-2.5 rounded-xl font-medium text-xs"
+                                style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }}
+                            >
+                                Scan another ticket
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

@@ -1,11 +1,14 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router";
 import { ShieldCheck, Lock, ArrowLeft, AlertCircle } from "lucide-react";
-import { useCart } from "../store";
+import { useAuth, useCart } from "../store";
+
+export const PENDING_CHECKOUT_KEY = "planzo:pendingCheckout:v1";
 
 export function Checkout() {
     const navigate = useNavigate();
     const { items, total } = useCart();
+    const { currentUser } = useAuth();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -14,6 +17,15 @@ export function Checkout() {
         setError(null);
 
         try {
+            window.localStorage.setItem(
+                PENDING_CHECKOUT_KEY,
+                JSON.stringify({
+                    items,
+                    user: currentUser ? { id: currentUser.id, name: currentUser.name } : null,
+                    createdAt: Date.now(),
+                })
+            );
+
             const res = await fetch("/api/create-checkout-session", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -23,10 +35,16 @@ export function Checkout() {
                 }),
             });
 
-            const data = await res.json();
+            const text = await res.text();
+            let data: { url?: string; error?: string } = {};
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                throw new Error(`Checkout server returned a non-JSON response (${res.status}). Check Vercel function logs.`);
+            }
 
             if (!res.ok || !data.url) {
-                throw new Error(data.error || "Failed to start checkout");
+                throw new Error(data.error || `Failed to start checkout (${res.status})`);
             }
 
             window.location.href = data.url;

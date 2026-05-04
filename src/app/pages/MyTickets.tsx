@@ -1,16 +1,61 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Ticket, Clock, MapPin, Star, QrCode, X, Check, Download, RefreshCw } from "lucide-react";
 import { MOCK_BOOKINGS, Booking } from "../mock-data";
+import { useTickets } from "../store";
+import type { IssuedTicket } from "../lib/tickets";
 
 type ModalType = "cancel" | "rate" | "refund" | "qr" | null;
 
 export function MyTickets() {
+    const { tickets } = useTickets();
     const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
     const [cancelled, setCancelled] = useState<string[]>([]);
     const [cancellingId, setCancellingId] = useState<string | null>(null);
     const [activeModal, setActiveModal] = useState<ModalType>(null);
     const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+    const [selectedTicket, setSelectedTicket] = useState<IssuedTicket | null>(null);
+
+    const issuedBookings: Booking[] = useMemo(() => {
+        const groups = new Map<string, IssuedTicket[]>();
+        for (const t of tickets) {
+            const list = groups.get(t.bookingId) ?? [];
+            list.push(t);
+            groups.set(t.bookingId, list);
+        }
+        return Array.from(groups.values()).map((group) => {
+            const head = group[0];
+            const status: Booking["status"] = group.every((t) => t.status === "cancelled")
+                ? "cancelled"
+                : group.some((t) => t.status === "checked_in")
+                  ? "confirmed"
+                  : "confirmed";
+            return {
+                id: head.bookingId,
+                eventId: head.eventId,
+                eventTitle: head.eventTitle,
+                eventDate: head.eventDate,
+                eventVenue: head.eventVenue,
+                userId: head.userId,
+                tierName: head.tierName,
+                quantity: group.length,
+                total: group.reduce((s, t) => s + t.price, 0),
+                status,
+                bookedAt: head.issuedAt.slice(0, 10),
+                qrCode: head.id,
+            };
+        });
+    }, [tickets]);
+
+    const ticketByBookingId = useMemo(() => {
+        const m = new Map<string, IssuedTicket>();
+        for (const t of tickets) {
+            if (!m.has(t.bookingId)) m.set(t.bookingId, t);
+        }
+        return m;
+    }, [tickets]);
+
+    const allBookings = useMemo(() => [...issuedBookings, ...MOCK_BOOKINGS], [issuedBookings]);
 
     // Rate Event
     const [rating, setRating] = useState(0);
@@ -24,12 +69,13 @@ export function MyTickets() {
     const [refundSubmitted, setRefundSubmitted] = useState<string[]>([]);
     const [refundLoading, setRefundLoading] = useState(false);
 
-    const upcoming = MOCK_BOOKINGS.filter((b) => b.status !== "cancelled" && !cancelled.includes(b.id));
-    const past = MOCK_BOOKINGS.filter((b) => !upcoming.includes(b));
+    const upcoming = allBookings.filter((b) => b.status !== "cancelled" && !cancelled.includes(b.id));
+    const past = allBookings.filter((b) => !upcoming.includes(b));
     const visibleBookings = tab === "upcoming" ? upcoming : past;
 
     const openModal = (type: ModalType, booking: Booking) => {
         setSelectedBooking(booking);
+        setSelectedTicket(ticketByBookingId.get(booking.id) ?? null);
         setActiveModal(type);
         setRating(0);
         setReview("");
@@ -40,6 +86,7 @@ export function MyTickets() {
     const closeModal = () => {
         setActiveModal(null);
         setSelectedBooking(null);
+        setSelectedTicket(null);
     };
 
     const handleCancel = (id: string) => {
@@ -86,9 +133,9 @@ export function MyTickets() {
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-4 mb-8">
                     {[
-                        { label: "Total Bookings", value: MOCK_BOOKINGS.length, color: "#f97316" },
-                        { label: "Confirmed", value: MOCK_BOOKINGS.filter(b => b.status === "confirmed").length, color: "#f97316" },
-                        { label: "Total Spent", value: `$${MOCK_BOOKINGS.reduce((s, b) => s + b.total, 0)}`, color: "#f97316" },
+                        { label: "Total Bookings", value: allBookings.length, color: "#f97316" },
+                        { label: "Confirmed", value: allBookings.filter(b => b.status === "confirmed").length, color: "#f97316" },
+                        { label: "Total Spent", value: `$${allBookings.reduce((s, b) => s + b.total, 0)}`, color: "#f97316" },
                     ].map(({ label, value, color }) => (
                         <div key={label} className="p-4 rounded-xl text-center" style={{ background: "var(--color-bg-card)", border: "1px solid rgba(249,115,22,0.08)" }}>
                             <p className="text-xl font-bold" style={{ color }}>{value}</p>
@@ -122,13 +169,18 @@ export function MyTickets() {
                             const sc = statusColor(booking.status);
                             const isRated = ratingSubmitted.includes(booking.id);
                             const isRefunded = refundSubmitted.includes(booking.id);
+                            const realTicket = ticketByBookingId.get(booking.id);
                             return (
                                 <div key={booking.id} className="p-5 rounded-2xl" style={{ background: "var(--color-bg-card)", border: "1px solid rgba(74,222,128,0.1)" }}>
                                     <div className="flex flex-col md:flex-row gap-5">
                                         {/* QR Code - clickable */}
-                                        <button onClick={() => openModal("qr", booking)} className="w-24 h-24 rounded-xl flex-shrink-0 flex items-center justify-center transition-all hover:scale-105"
-                                            style={{ background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.25)", backgroundImage: `repeating-linear-gradient(0deg,rgba(249,115,22,0.08) 0,rgba(249,115,22,0.08) 2px,transparent 0,transparent 6px),repeating-linear-gradient(90deg,rgba(249,115,22,0.08) 0,rgba(249,115,22,0.08) 2px,transparent 0,transparent 6px)` }}>
-                                            <QrCode size={32} style={{ color: "#f97316" }} />
+                                        <button onClick={() => openModal("qr", booking)} className="w-24 h-24 rounded-xl flex-shrink-0 flex items-center justify-center transition-all hover:scale-105 overflow-hidden"
+                                            style={{ background: realTicket ? "#ffffff" : "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.25)", backgroundImage: realTicket ? undefined : `repeating-linear-gradient(0deg,rgba(249,115,22,0.08) 0,rgba(249,115,22,0.08) 2px,transparent 0,transparent 6px),repeating-linear-gradient(90deg,rgba(249,115,22,0.08) 0,rgba(249,115,22,0.08) 2px,transparent 0,transparent 6px)` }}>
+                                            {realTicket ? (
+                                                <img src={realTicket.qrDataUrl} alt="Ticket QR" className="w-full h-full object-contain p-1" />
+                                            ) : (
+                                                <QrCode size={32} style={{ color: "#f97316" }} />
+                                            )}
                                         </button>
 
                                         {/* Details */}
@@ -194,17 +246,35 @@ export function MyTickets() {
                                 <h2 className="text-base font-bold" style={{ color: "#1a0a00" }}>Your Digital Ticket</h2>
                                 <button onClick={closeModal}><X size={18} style={{ color: "#78716c" }} /></button>
                             </div>
-                            <div className="w-36 h-36 mx-auto rounded-2xl mb-4 flex items-center justify-center"
-                                style={{ background: "rgba(249,115,22,0.06)", border: "2px solid rgba(249,115,22,0.3)", backgroundImage: `repeating-linear-gradient(0deg,rgba(249,115,22,0.12) 0,rgba(249,115,22,0.12) 2px,transparent 0,transparent 8px),repeating-linear-gradient(90deg,rgba(249,115,22,0.12) 0,rgba(249,115,22,0.12) 2px,transparent 0,transparent 8px)` }}>
-                                <QrCode size={64} style={{ color: "#f97316" }} />
-                            </div>
+                            {selectedTicket ? (
+                                <div className="w-44 h-44 mx-auto rounded-2xl mb-4 flex items-center justify-center p-2 overflow-hidden"
+                                    style={{ background: "#ffffff", border: "2px solid rgba(249,115,22,0.3)" }}>
+                                    <img src={selectedTicket.qrDataUrl} alt="Ticket QR code" className="w-full h-full object-contain" />
+                                </div>
+                            ) : (
+                                <div className="w-36 h-36 mx-auto rounded-2xl mb-4 flex items-center justify-center"
+                                    style={{ background: "rgba(249,115,22,0.06)", border: "2px solid rgba(249,115,22,0.3)", backgroundImage: `repeating-linear-gradient(0deg,rgba(249,115,22,0.12) 0,rgba(249,115,22,0.12) 2px,transparent 0,transparent 8px),repeating-linear-gradient(90deg,rgba(249,115,22,0.12) 0,rgba(249,115,22,0.12) 2px,transparent 0,transparent 8px)` }}>
+                                    <QrCode size={64} style={{ color: "#f97316" }} />
+                                </div>
+                            )}
                             <p className="font-bold text-sm mb-1" style={{ color: "#1a0a00" }}>{selectedBooking.eventTitle}</p>
                             <p className="text-xs mb-1" style={{ color: "#78716c" }}>{selectedBooking.tierName} × {selectedBooking.quantity} · {selectedBooking.eventDate}</p>
                             <p className="text-xs font-mono mb-4 px-4 py-2 rounded-lg" style={{ background: "rgba(249,115,22,0.06)", color: "#92400e" }}>{selectedBooking.qrCode}</p>
                             <p className="text-xs mb-4" style={{ color: "#78716c" }}>Show this QR code at the venue entrance for scanning.</p>
-                            <button onClick={closeModal} className="w-full py-3 rounded-xl font-bold text-sm"
+                            <button
+                                onClick={() => {
+                                    if (selectedTicket) {
+                                        const a = document.createElement("a");
+                                        a.href = selectedTicket.qrDataUrl;
+                                        a.download = `planzo-ticket-${selectedTicket.id}.png`;
+                                        a.click();
+                                    } else {
+                                        closeModal();
+                                    }
+                                }}
+                                className="w-full py-3 rounded-xl font-bold text-sm"
                                 style={{ background: "linear-gradient(135deg,#f97316,#ef4444)", color: "#fff" }}>
-                                <Download size={14} className="inline mr-2" />Download PDF
+                                <Download size={14} className="inline mr-2" />{selectedTicket ? "Download QR" : "Download PDF"}
                             </button>
                         </div>
                     )}
