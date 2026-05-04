@@ -3,8 +3,10 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { AppProvider } from "./store";
 import { Navbar } from "./components/navbar";
 import { EventDiscovery } from "./pages/EventDiscovery";
+import { GlobeView } from "./pages/GlobeView";
 import { EventDetail } from "./pages/EventDetail";
 import { Checkout } from "./pages/Checkout";
+import { CheckoutSuccess } from "./pages/CheckoutSuccess";
 import { MyTickets } from "./pages/MyTickets";
 import { OrganizerDashboard } from "./pages/OrganizerDashboard";
 import { AnalyticsDashboard } from "./pages/AnalyticsDashboard";
@@ -24,8 +26,10 @@ export default function App() {
           <main>
             <Routes>
               <Route path="/" element={<EventDiscovery />} />
+              <Route path="/globe" element={<GlobeView />} />
               <Route path="/events/:id" element={<EventDetail />} />
               <Route path="/checkout" element={<Checkout />} />
+              <Route path="/checkout/success" element={<CheckoutSuccess />} />
               <Route path="/my-tickets" element={<MyTickets />} />
               <Route path="/organizer" element={<OrganizerDashboard />} />
               <Route path="/analytics" element={<AnalyticsDashboard />} />

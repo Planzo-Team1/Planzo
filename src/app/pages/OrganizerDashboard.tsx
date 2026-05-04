@@ -1,10 +1,13 @@
 import React, { useState } from "react";
 import {
     Plus, Users, DollarSign, BarChart2, Edit, Trash2, Eye, Calendar,
-    X, Check, Send, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, BellRing
+    X, Check, Send, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, BellRing,
+    QrCode, ScanLine, AlertTriangle
 } from "lucide-react";
 import { MOCK_BOOKINGS } from "../mock-data";
-import { useEvents } from "../store";
+import { useEvents, useAuth, useTickets } from "../store";
+import { verifyTicketPayload } from "../lib/tickets";
+import { QrScanner } from "../components/qr-scanner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 const revenueData = [
@@ -15,26 +18,37 @@ const revenueData = [
 
 type CreateForm = {
     title: string; date: string; category: string; venue: string;
-    description: string;
+    description: string; image: string;
     tiers: { name: string; price: string; capacity: string }[];
 };
 
 const initForm: CreateForm = {
-    title: "", date: "", category: "Music", venue: "", description: "",
+    title: "", date: "", category: "Music", venue: "", description: "", image: "",
     tiers: [{ name: "General", price: "", capacity: "" }],
 };
 
 type EditForm = { title: string; date: string; venue: string };
 
+type VerifyState =
+    | { kind: "idle" }
+    | { kind: "ok"; ticket: { id: string; eventTitle: string; tierName: string; userName: string; eventDate: string; checkedInAt?: string } }
+    | { kind: "warn"; message: string }
+    | { kind: "error"; message: string };
+
 export function OrganizerDashboard() {
-    const { events, addEvent, updateEvent, deleteEvent } = useEvents();
+    const { currentUser } = useAuth();
+    const { events: allEvents, addEvent, updateEvent, deleteEvent } = useEvents();
+    const { findTicketById, checkInTicket } = useTickets();
+    const events = allEvents.filter(e => e.organizerId === currentUser?.id);
+    const [localBookings, setLocalBookings] = useState(MOCK_BOOKINGS.filter(b => events.some(e => e.id === b.eventId)));
     const [showCreate, setShowCreate] = useState(false);
     const [showEdit, setShowEdit] = useState(false);
     const [showSendUpdate, setShowSendUpdate] = useState(false);
     const [showRegistrations, setShowRegistrations] = useState(false);
-    const [published, setPublished] = useState<Record<string, boolean>>(
-        Object.fromEntries(events.map(e => [e.id, true]))
-    );
+    const [showVerify, setShowVerify] = useState(false);
+    const [verifyMode, setVerifyMode] = useState<"camera" | "manual">("camera");
+    const [verifyState, setVerifyState] = useState<VerifyState>({ kind: "idle" });
+    const [manualPayload, setManualPayload] = useState("");
     const [form, setForm] = useState<CreateForm>(initForm);
     const [editForm, setEditForm] = useState<EditForm>({ title: "", date: "", venue: "" });
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -43,8 +57,56 @@ export function OrganizerDashboard() {
     const [updateSent, setUpdateSent] = useState(false);
     const [updateLoading, setUpdateLoading] = useState(false);
 
+    const organizerEventIds = new Set(events.map((e) => e.id));
+
+    const handleScanResult = (raw: string) => {
+        const verified = verifyTicketPayload(raw);
+        if (!verified.ok) {
+            setVerifyState({ kind: "error", message: verified.reason });
+            return;
+        }
+        const ticket = findTicketById(verified.payload.id);
+        if (!ticket) {
+            setVerifyState({ kind: "error", message: "Ticket not found in this device's records" });
+            return;
+        }
+        if (organizerEventIds.size > 0 && !organizerEventIds.has(ticket.eventId)) {
+            setVerifyState({ kind: "error", message: `Ticket is for an event you don't organize: "${ticket.eventTitle}"` });
+            return;
+        }
+        const result = checkInTicket(ticket.id);
+        if (!result.ok) {
+            setVerifyState({
+                kind: "warn",
+                message: result.reason,
+            });
+            return;
+        }
+        setVerifyState({
+            kind: "ok",
+            ticket: {
+                id: result.ticket.id,
+                eventTitle: result.ticket.eventTitle,
+                tierName: result.ticket.tierName,
+                userName: result.ticket.userName,
+                eventDate: result.ticket.eventDate,
+                checkedInAt: result.ticket.checkedInAt,
+            },
+        });
+    };
+
+    const resetVerify = () => {
+        setVerifyState({ kind: "idle" });
+        setManualPayload("");
+    };
+
+    const closeVerify = () => {
+        setShowVerify(false);
+        resetVerify();
+    };
+
     const stats = [
-        { label: "Active Events", value: events.filter(e => published[e.id]).length, icon: Calendar, color: "#f97316" },
+        { label: "Active Events", value: events.filter(e => e.status !== "draft").length, icon: Calendar, color: "#f97316" },
         { label: "Total Attendees", value: "4,280", icon: Users, color: "#2563eb" },
         { label: "Revenue (MTD)", value: "$62,300", icon: DollarSign, color: "#d97706" },
         { label: "Avg. Rating", value: "4.8 ★", icon: BarChart2, color: "#7c3aed" },
@@ -66,11 +128,11 @@ export function OrganizerDashboard() {
                 category: form.category,
                 description: form.description,
                 featured: false,
-                image: "",
+                image: form.image || "",
                 lat: 0,
                 lng: 0,
-                organizer: "You",
-                organizerId: "u1",
+                organizer: currentUser?.name || "You",
+                organizerId: currentUser?.id || "u1",
                 tags: [form.category],
                 rating: 0,
                 reviewCount: 0,
@@ -79,13 +141,12 @@ export function OrganizerDashboard() {
                     id: `tier-${i}`,
                     name: t.name || "General",
                     description: "",
-                    price: parseFloat(t.price) || 0,
-                    total: parseInt(t.capacity) || 100,
-                    remaining: parseInt(t.capacity) || 100,
+                    price: parseFloat(t.price) || 1,
+                    total: parseInt(t.capacity) || 1,
+                    remaining: parseInt(t.capacity) || 1,
                 })),
             };
             addEvent(newEvent);
-            setPublished(prev => ({ ...prev, [newId]: true }));
             setSaving(false);
             setShowCreate(false);
             setForm(initForm);
@@ -97,7 +158,7 @@ export function OrganizerDashboard() {
         setSaving(true);
         setTimeout(() => {
             const updated = events.find(ev => ev.id === editingId);
-            if (updated) updateEvent({ ...updated, title: editForm.title || updated.title, date: editForm.date || updated.date, venue: editForm.venue || updated.venue });
+            if (updated) updateEvent({ ...updated, title: editForm.title, date: editForm.date, venue: editForm.venue });
             setSaving(false); setShowEdit(false); setEditingId(null);
         }, 800);
     };
@@ -108,7 +169,9 @@ export function OrganizerDashboard() {
         setShowEdit(true);
     };
 
-    const togglePublish = (id: string) => setPublished(prev => ({ ...prev, [id]: !prev[id] }));
+    const togglePublish = (event: typeof events[0]) => {
+        updateEvent({ ...event, status: event.status === "draft" ? "upcoming" : "draft" });
+    };
 
     const handleSendUpdate = (e: React.FormEvent) => {
         e.preventDefault();
@@ -128,7 +191,11 @@ export function OrganizerDashboard() {
                         <h1 className="text-2xl font-bold mb-1" style={{ fontFamily: "'Outfit',sans-serif", color: "#1a0a00" }}>Organizer Dashboard</h1>
                         <p className="text-sm" style={{ color: "#78716c" }}>Create, manage, and track your events</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                        <button onClick={() => { setShowVerify(true); resetVerify(); setVerifyMode("camera"); }} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold"
+                            style={{ background: "rgba(74,222,128,0.12)", color: "#16a34a", border: "1px solid rgba(74,222,128,0.3)" }}>
+                            <ScanLine size={14} /> Verify Tickets
+                        </button>
                         <button onClick={() => setShowRegistrations(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold"
                             style={{ background: "rgba(249,115,22,0.1)", color: "#f97316", border: "1px solid rgba(249,115,22,0.25)" }}>
                             <Users size={14} /> Registrations
@@ -174,7 +241,7 @@ export function OrganizerDashboard() {
                                 </thead>
                                 <tbody className="divide-y divide-[rgba(249,115,22,0.04)]">
                                     {events.map((event) => {
-                                        const isPublished = published[event.id];
+                                        const isPublished = event.status !== "draft";
                                         return (
                                             <tr key={event.id} className="hover:bg-[rgba(249,115,22,0.02)] transition-colors">
                                                 <td className="px-4 py-3">
@@ -191,7 +258,7 @@ export function OrganizerDashboard() {
                                                     ${event.tiers.reduce((s, t) => s + (t.total - t.remaining) * t.price, 0).toLocaleString()}
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    <button onClick={() => togglePublish(event.id)}
+                                                    <button onClick={() => togglePublish(event)}
                                                         className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all"
                                                         style={{
                                                             background: isPublished ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.08)",
@@ -206,7 +273,7 @@ export function OrganizerDashboard() {
                                                     <div className="flex gap-1">
                                                         <button className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(249,115,22,0.08)", color: "#f97316" }} title="View"><Eye size={12} /></button>
                                                         <button onClick={() => openEdit(event)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(96,165,250,0.08)", color: "#2563eb" }} title="Edit"><Edit size={12} /></button>
-                                                        <button onClick={() => deleteEvent(event.id)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(248,113,113,0.08)", color: "#dc2626" }} title="Delete"><Trash2 size={12} /></button>
+                                                        <button onClick={() => { if(window.confirm('Are you sure you want to delete this event?')) deleteEvent(event.id); }} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(248,113,113,0.08)", color: "#dc2626" }} title="Delete"><Trash2 size={12} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -234,7 +301,7 @@ export function OrganizerDashboard() {
 
                         <h2 className="text-base font-bold mt-6 mb-3" style={{ color: "#1a0a00", fontFamily: "'Outfit',sans-serif" }}>Recent Bookings</h2>
                         <div className="space-y-2">
-                            {MOCK_BOOKINGS.map((b) => (
+                            {localBookings.slice(0, 5).map((b) => (
                                 <div key={b.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: "var(--color-bg-card)", border: "1px solid rgba(249,115,22,0.06)" }}>
                                     <div>
                                         <p className="text-xs font-medium" style={{ color: "#1a0a00" }}>{b.eventTitle.slice(0, 22)}…</p>
@@ -261,10 +328,11 @@ export function OrganizerDashboard() {
                                 { id: "title", label: "Event Title", placeholder: "e.g. Summer Music Festival", type: "text" },
                                 { id: "date", label: "Date", placeholder: "", type: "date" },
                                 { id: "venue", label: "Venue", placeholder: "e.g. Central Park, NYC", type: "text" },
+                                { id: "image", label: "Image URL", placeholder: "https://...", type: "url" },
                             ].map(({ id, label, placeholder, type }) => (
                                 <div key={id}>
                                     <label className="block text-xs font-medium mb-1.5" style={{ color: "#92400e" }}>{label}</label>
-                                    <input type={type} placeholder={placeholder} value={form[id as keyof CreateForm] as string} onChange={(e) => setForm({ ...form, [id]: e.target.value })} required className="w-full px-4 py-2.5 rounded-xl text-sm outline-none" style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }} />
+                                    <input type={type} placeholder={placeholder} min={type === "date" ? new Date().toISOString().split('T')[0] : undefined} value={form[id as keyof CreateForm] as string} onChange={(e) => setForm({ ...form, [id]: e.target.value })} required className="w-full px-4 py-2.5 rounded-xl text-sm outline-none" style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }} />
                                 </div>
                             ))}
                             <div>
@@ -283,10 +351,10 @@ export function OrganizerDashboard() {
                                     {form.tiers.map((tier, i) => (
                                         <div key={i} className="p-3 rounded-xl" style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.12)" }}>
                                             <div className="grid grid-cols-3 gap-2">
-                                                <input placeholder="Tier name" value={tier.name} onChange={(e) => { const t = [...form.tiers]; t[i].name = e.target.value; setForm({ ...form, tiers: t }); }} className="px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
-                                                <input placeholder="Price $" type="number" value={tier.price} onChange={(e) => { const t = [...form.tiers]; t[i].price = e.target.value; setForm({ ...form, tiers: t }); }} className="px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
+                                                <input required placeholder="Tier name" value={tier.name} onChange={(e) => { const t = [...form.tiers]; t[i].name = e.target.value; setForm({ ...form, tiers: t }); }} className="px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
+                                                <input required min="1" placeholder="Price $" type="number" value={tier.price} onChange={(e) => { const t = [...form.tiers]; t[i].price = e.target.value; setForm({ ...form, tiers: t }); }} className="px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
                                                 <div className="flex gap-1">
-                                                    <input placeholder="Capacity" type="number" value={tier.capacity} onChange={(e) => { const t = [...form.tiers]; t[i].capacity = e.target.value; setForm({ ...form, tiers: t }); }} className="flex-1 px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
+                                                    <input required min="1" placeholder="Capacity" type="number" value={tier.capacity} onChange={(e) => { const t = [...form.tiers]; t[i].capacity = e.target.value; setForm({ ...form, tiers: t }); }} className="flex-1 px-3 py-2 rounded-lg text-xs outline-none" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(249,115,22,0.15)", color: "#1a0a00" }} />
                                                     {form.tiers.length > 1 && <button type="button" onClick={() => removeTier(i)} className="w-7 h-7 flex items-center justify-center rounded-lg" style={{ background: "rgba(248,113,113,0.1)", color: "#dc2626" }}><X size={10} /></button>}
                                                 </div>
                                             </div>
@@ -322,7 +390,7 @@ export function OrganizerDashboard() {
                             ].map(({ id, label, type }) => (
                                 <div key={id}>
                                     <label className="block text-xs font-medium mb-1.5" style={{ color: "#92400e" }}>{label}</label>
-                                    <input type={type} value={editForm[id as keyof EditForm]} onChange={(e) => setEditForm({ ...editForm, [id]: e.target.value })} className="w-full px-4 py-2.5 rounded-xl text-sm outline-none" style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }} />
+                                    <input required type={type} min={type === "date" ? new Date().toISOString().split('T')[0] : undefined} value={editForm[id as keyof EditForm]} onChange={(e) => setEditForm({ ...editForm, [id]: e.target.value })} className="w-full px-4 py-2.5 rounded-xl text-sm outline-none" style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }} />
                                 </div>
                             ))}
                             <button type="submit" disabled={saving} className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2" style={{ background: "linear-gradient(135deg,#2563eb,#1d4ed8)", color: "#fff" }}>
@@ -385,20 +453,145 @@ export function OrganizerDashboard() {
                             <button onClick={() => setShowRegistrations(false)}><X size={18} style={{ color: "#78716c" }} /></button>
                         </div>
                         <div className="space-y-2">
-                            {MOCK_BOOKINGS.map((b) => (
+                            {localBookings.map((b) => (
                                 <div key={b.id} className="flex items-center justify-between p-4 rounded-xl" style={{ background: "var(--color-bg-card)", border: "1px solid rgba(249,115,22,0.08)" }}>
                                     <div>
                                         <p className="text-sm font-semibold" style={{ color: "#1a0a00" }}>User #{b.userId}</p>
                                         <p className="text-xs" style={{ color: "#78716c" }}>{b.eventTitle.slice(0, 28)}… · {b.tierName} × {b.quantity}</p>
-                                        <span className="text-xs px-2 py-0.5 rounded-full mt-1 inline-block" style={{ background: b.status === "confirmed" ? "rgba(74,222,128,0.1)" : "rgba(251,191,36,0.1)", color: b.status === "confirmed" ? "#f97316" : "#d97706" }}>{b.status}</span>
+                                        <span className="text-xs px-2 py-0.5 rounded-full mt-1 inline-block" style={{ background: b.status === "confirmed" ? "rgba(74,222,128,0.1)" : b.status === "cancelled" ? "rgba(248,113,113,0.1)" : "rgba(251,191,36,0.1)", color: b.status === "confirmed" ? "#f97316" : b.status === "cancelled" ? "#dc2626" : "#d97706" }}>{b.status}</span>
                                     </div>
                                     <div className="flex gap-2">
-                                        <button className="px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: "rgba(74,222,128,0.1)", color: "#f97316", border: "1px solid rgba(249,115,22,0.2)" }}>✓ Approve</button>
-                                        <button className="px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: "rgba(248,113,113,0.08)", color: "#dc2626", border: "1px solid rgba(248,113,113,0.2)" }}>✕ Cancel</button>
+                                        <button onClick={() => setLocalBookings(lbs => lbs.map(lb => lb.id === b.id ? { ...lb, status: "confirmed" } : lb))} className="px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: "rgba(74,222,128,0.1)", color: "#f97316", border: "1px solid rgba(249,115,22,0.2)" }}>✓ Approve</button>
+                                        <button onClick={() => setLocalBookings(lbs => lbs.map(lb => lb.id === b.id ? { ...lb, status: "cancelled" } : lb))} className="px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: "rgba(248,113,113,0.08)", color: "#dc2626", border: "1px solid rgba(248,113,113,0.2)" }}>✕ Cancel</button>
                                     </div>
                                 </div>
                             ))}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Verify Tickets Modal */}
+            {showVerify && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)" }}
+                    onClick={(e) => { if (e.target === e.currentTarget) closeVerify(); }}>
+                    <div className="w-full max-w-md rounded-2xl p-6" style={{ background: "var(--color-bg-panel)", border: "1px solid rgba(74,222,128,0.3)" }}>
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-2">
+                                <ScanLine size={18} style={{ color: "#16a34a" }} />
+                                <h2 className="text-base font-bold" style={{ color: "#1a0a00" }}>Verify Ticket</h2>
+                            </div>
+                            <button onClick={closeVerify}><X size={18} style={{ color: "#78716c" }} /></button>
+                        </div>
+
+                        <div className="flex gap-2 mb-4">
+                            {(["camera", "manual"] as const).map((m) => (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => { setVerifyMode(m); resetVerify(); }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium capitalize"
+                                    style={{
+                                        background: verifyMode === m ? "rgba(74,222,128,0.15)" : "var(--color-bg-raised)",
+                                        color: verifyMode === m ? "#16a34a" : "#78716c",
+                                        border: `1px solid ${verifyMode === m ? "rgba(74,222,128,0.35)" : "rgba(249,115,22,0.15)"}`,
+                                    }}
+                                >
+                                    {m === "camera" ? <ScanLine size={12} /> : <QrCode size={12} />}
+                                    {m === "camera" ? "Camera Scan" : "Manual Code"}
+                                </button>
+                            ))}
+                        </div>
+
+                        {verifyMode === "camera" && (
+                            <QrScanner
+                                paused={verifyState.kind === "ok" || verifyState.kind === "warn"}
+                                onResult={handleScanResult}
+                            />
+                        )}
+
+                        {verifyMode === "manual" && (
+                            <form
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    if (manualPayload.trim()) handleScanResult(manualPayload.trim());
+                                }}
+                                className="space-y-3"
+                            >
+                                <label className="block text-xs font-medium" style={{ color: "#92400e" }}>
+                                    Paste the QR payload or enter the ticket ID
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    value={manualPayload}
+                                    onChange={(e) => setManualPayload(e.target.value)}
+                                    placeholder='{"v":1,"id":"TK-...","sig":"..."}'
+                                    className="w-full px-3 py-2 rounded-xl text-xs font-mono outline-none resize-none"
+                                    style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }}
+                                />
+                                <button
+                                    type="submit"
+                                    className="w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                                    style={{ background: "linear-gradient(135deg,#16a34a,#059669)", color: "#fff" }}
+                                >
+                                    <Check size={14} /> Verify
+                                </button>
+                            </form>
+                        )}
+
+                        {verifyState.kind !== "idle" && (
+                            <div
+                                className="mt-4 p-4 rounded-xl flex items-start gap-3"
+                                style={{
+                                    background:
+                                        verifyState.kind === "ok"
+                                            ? "rgba(22,163,74,0.1)"
+                                            : verifyState.kind === "warn"
+                                              ? "rgba(251,191,36,0.12)"
+                                              : "rgba(239,68,68,0.1)",
+                                    border: `1px solid ${
+                                        verifyState.kind === "ok"
+                                            ? "rgba(22,163,74,0.35)"
+                                            : verifyState.kind === "warn"
+                                              ? "rgba(251,191,36,0.35)"
+                                              : "rgba(239,68,68,0.35)"
+                                    }`,
+                                }}
+                            >
+                                {verifyState.kind === "ok" ? (
+                                    <Check size={18} style={{ color: "#16a34a", flexShrink: 0, marginTop: 2 }} />
+                                ) : verifyState.kind === "warn" ? (
+                                    <AlertTriangle size={18} style={{ color: "#d97706", flexShrink: 0, marginTop: 2 }} />
+                                ) : (
+                                    <X size={18} style={{ color: "#dc2626", flexShrink: 0, marginTop: 2 }} />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                    {verifyState.kind === "ok" ? (
+                                        <>
+                                            <p className="text-sm font-bold" style={{ color: "#15803d" }}>Checked in successfully</p>
+                                            <p className="text-xs mt-1" style={{ color: "#1a0a00" }}>{verifyState.ticket.userName} · {verifyState.ticket.eventTitle}</p>
+                                            <p className="text-xs" style={{ color: "#78716c" }}>{verifyState.ticket.tierName} · {verifyState.ticket.eventDate}</p>
+                                            <p className="text-[10px] font-mono mt-1" style={{ color: "#15803d" }}>{verifyState.ticket.id}</p>
+                                        </>
+                                    ) : verifyState.kind === "warn" ? (
+                                        <p className="text-sm font-medium" style={{ color: "#92400e" }}>{verifyState.message}</p>
+                                    ) : (
+                                        <p className="text-sm font-medium" style={{ color: "#991b1b" }}>{verifyState.message}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {verifyState.kind !== "idle" && (
+                            <button
+                                type="button"
+                                onClick={resetVerify}
+                                className="mt-3 w-full py-2.5 rounded-xl font-medium text-xs"
+                                style={{ background: "var(--color-bg-raised)", border: "1px solid rgba(249,115,22,0.2)", color: "#1a0a00" }}
+                            >
+                                Scan another ticket
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
