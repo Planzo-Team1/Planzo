@@ -63,7 +63,7 @@ pipeline {
             failFast true
             parallel {
             
-        stage('Docker Build & Package') {
+        stage('Docker Build & Packages') {
             steps {
                 echo "=== Building Image === "
                 sh """
