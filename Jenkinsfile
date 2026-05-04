@@ -10,8 +10,8 @@ pipeline {
     environment {
         APP_NAME     = 'planzo-web'
         DOCKER_IMAGE = "${env.APP_NAME}:latest"
-        DEV_SERVER   = "ubuntu@172.31.15.225"
-        QA_SERVER    = "ubuntu@172.31.3.1"
+        DEV_SERVER   = "ubuntu@13.217.4.5"
+        QA_SERVER    = "ubuntu@52.90.217.218"
         GIT_BRANCH = """${sh(
                 returnStdout: true,
                 script: 'echo "\$GIT_BRANCH" | sed "s|origin/||"'
